@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import uuid
-from typing import Sequence
+from datetime import datetime
+from typing import Callable, Sequence
 
 from .analytics import confidence_interval, summarize_spectrum, yield_rate
 from .auth import Auth
@@ -11,15 +12,20 @@ from .storage import connect, event, transaction, utcnow
 
 
 class PhotonService:
-    def __init__(self, database: str = ":memory:"):
+    def __init__(self, database: str = ":memory:", clock: Callable[[], datetime] | None = None):
         self.db = connect(database)
-        self.auth = Auth(self.db)
+        self.auth = Auth(self.db, clock=clock)
 
     def bootstrap_admin(self, user_id: str = "admin", password: str = "photon-admin") -> None:
         try:
             self.auth.create_user(user_id, password, "admin")
         except Exception:
             pass
+
+    def deactivate_user(self, token: str, user_id: str) -> dict:
+        self.auth.require(token, "admin")
+        self.auth.deactivate(user_id)
+        return {"user_id": user_id, "active": False}
 
     def create_lot(self, token: str, lot_id: str, product: str, process_rev: str, wafer_count: int) -> dict:
         actor = self.auth.require(token, "submit")
