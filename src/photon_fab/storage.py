@@ -33,9 +33,12 @@ def utcnow() -> str:
 
 
 def connect(path: str = ":memory:") -> sqlite3.Connection:
-    db = sqlite3.connect(path)
+    # 服务由 ThreadingHTTPServer 驱动，连接会在不同工作线程间复用；
+    # 调用方（PhotonService.lock）负责串行化所有访问。
+    db = sqlite3.connect(path, check_same_thread=False)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys=ON")
+    db.execute("PRAGMA busy_timeout=5000")
     db.executescript(SCHEMA)
     db.commit()
     return db

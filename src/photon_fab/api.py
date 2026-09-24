@@ -20,23 +20,38 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _token(self) -> str:
+        return (self.headers.get("Authorization") or "").removeprefix("Bearer ").strip()
+
     def do_GET(self):
         if self.path == "/health":
             return self._json(200, {"status": "ok", "service": "photon-fab"})
         if self.path.startswith("/lots/"):
             try:
-                token = self.headers.get("Authorization", "").removeprefix("Bearer ")
-                return self._json(200, self.service.get_lot(token, self.path.split("/", 2)[2]))
+                return self._json(200, self.service.get_lot(self._token(), self.path.split("/", 2)[2]))
+            except PermissionError as exc:
+                return self._json(403, {"error": str(exc)})
+            except KeyError as exc:
+                return self._json(404, {"error": f"lot {exc.args[0]} not found"})
             except Exception as exc:
                 return self._json(400, {"error": str(exc)})
         return self._json(404, {"error": "not found"})
 
     def do_POST(self):
         try:
-            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
+            raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            body = json.loads(raw) if raw.strip() else {}
             if self.path == "/login":
-                return self._json(200, {"token": self.service.auth.login(body["user_id"], body["password"])})
-            token = self.headers.get("Authorization", "").removeprefix("Bearer ")
+                try:
+                    token = self.service.auth.login(body["user_id"], body["password"])
+                except PermissionError as exc:
+                    return self._json(401, {"error": str(exc)})
+                return self._json(200, {"token": token})
+            token = self._token()
+            if self.path.startswith("/users/") and self.path.endswith("/deactivate"):
+                user_id = self.path.split("/")[2]
+                self.service.deactivate_user(token, user_id)
+                return self._json(200, {"user_id": user_id, "active": False})
             if self.path == "/lots":
                 return self._json(201, self.service.create_lot(token, body["lot_id"], body["product"], body["process_rev"], body["wafer_count"]))
             if self.path.startswith("/lots/") and self.path.endswith("/measurements"):
@@ -47,6 +62,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(404, {"error": "not found"})
         except PermissionError as exc:
             return self._json(403, {"error": str(exc)})
+        except KeyError as exc:
+            return self._json(404, {"error": f"{exc.args[0]} not found"})
         except Exception as exc:
             return self._json(400, {"error": str(exc)})
 
